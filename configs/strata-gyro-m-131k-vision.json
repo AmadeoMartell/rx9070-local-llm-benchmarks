@@ -1,0 +1,50 @@
+{
+ "exe": "build/strata",
+ "args": [
+  "--pack",
+  "packs/gyro-m",
+  "--native",
+  "~/models/gyro/Qwen3.8-Flash-Next-Gyro-M-TQ2_0.gguf",
+  "--expert-profile",
+  "data/expert-profile.bin",
+  "--expert-cache",
+  "auto",
+  "--prefill",
+  "auto",
+  "--spec",
+  "4",
+  "--spec-min-p",
+  "0.5",
+  "--mtp",
+  "mtp/rt",
+  "--max-context",
+  "131072",
+  "--kv",
+  "k8v4",
+  "--resident-experts",
+  "--vision"
+ ],
+ "cwd": ".",
+ "tokenizer": "packs/gyro-m/tokenizer",
+ "model_name": "gyro-m-strata",
+ "log": "strata-gyro.log",
+ "host": "127.0.0.1",
+ "port": 8081,
+ "sampling": {
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "top_k": 20,
+  "min_p": 0.05
+ },
+ "env": {},
+ "tool_call_recovery": true,
+ "reasoning_close_retry": true,
+ "reasoning_budget_tokens": 16384,
+ "vision": {
+  "exe": "~/strata-agention/build-vision/bin/strata-vision",
+  "mmproj": "~/models/gyro/mmproj-F16.gguf",
+  "model": "~/models/gyro/Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf",
+  "threads": 8,
+  "max_tokens": 300
+ }
+}
