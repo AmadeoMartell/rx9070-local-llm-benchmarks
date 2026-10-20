@@ -16,7 +16,7 @@ Qwen3.8-27B UD-IQ4_XS, llama.cpp r28
   Java task 49 min, the repeat failed
   lowest KLD of the 27B quants measured (0.086 en, 0.023 code)
 
-Gyro-M     1014 / 50 at 104K; review scores within noise of Gyro-S; 2.5 GiB RAM headroom on 32 GB
+Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB
 MTP2       Qwen 27B decode 55 vs 31 t/s (Java run medians), but ctx drops from 131K to 81-88K
 Vulkan     llama.cpp, Qwen 27B: HIP is 13-41% faster on prefill at about equal decode
 SSD        Strata on Windows paged experts out: 70-110 GB/h of writes; Linux + cgroup without swap: ~0
@@ -70,7 +70,7 @@ llama-bench pp2048 / tg128, Qwen3.8-27B UD-IQ4_XS, HIP: prefill 1183, decode 33.
 | Gyro-S TQ1_0 + vision | Strata rc2, MTP4 | 131K | k8v4 | 90–116K | 1088 | 62.0 |
 | Gyro-S TQ1_0 + vision | Strata rc2, MTP4 | 196K | k8v4 | 90–116K | 1202 | 54.5 |
 | Gyro-S TQ1_0 + vision | Strata rc2, MTP4 | 262K | k8v4 | 90–116K | 1080 | 53.0 |
-| Gyro-M TQ2_0 | Strata rc2, MTP4 | 131K | k8v4 | 104K | 1014 | 50.1 |
+| Gyro-M TQ2_0 | Strata rc2, MTP4 | 131K | k8v4 | 106K | 1014 | 50.1 |
 | Flash-Next Coder IQ1_M | Strata 0.1.44, resident | 131K | k8v4 | 100K | ~1441 | — |
 | Qwen3.8-27B UD-IQ4_XS | r28, ngram | 131K | q4_0 | 127K | 540 | 25.2 |
 | Qwen3.8-27B heretic-ara IQ4_XS + CPU vision | r28 | 131K | q4_0 | 98K | 666 | 27.5 |
@@ -97,7 +97,7 @@ llama-bench pp2048 / tg128, Qwen3.8-27B UD-IQ4_XS, HIP: prefill 1183, decode 33.
 | Gyro-S TQ1_0 + vision | 262K | 90–116K | 566 | 56.3 |
 | Gyro-S TQ1_0 | 262K | 205K | 533 | 52.9 |
 | Gyro-M TQ2_0 | 131K | 32K | 580 | 50.1 |
-| Gyro-M TQ2_0 | 131K | 104K | 474 | 45.4 |
+| Gyro-M TQ2_0 | 131K | 106K | 474 | 45.4 |
 | Qwen3.8-27B UD-IQ4_XS, ngram | 131K | 30K | 755 | 36.6 |
 | Qwen3.8-27B UD-IQ4_XS, ngram | 131K | 54K | 604 | 38.9 |
 | Qwen3.8-27B UD-IQ4_XS, ngram | 131K | 130K | 345 | 23.5 |
@@ -113,11 +113,11 @@ llama-bench pp2048 / tg128, Qwen3.8-27B UD-IQ4_XS, HIP: prefill 1183, decode 33.
 
 ### Memory and SSD (Strata in a systemd unit, `MemoryMax=29G`, `MemorySwapMax=0`)
 
-| Model | RAM (anon) | headroom | PSI full max | SSD writes / agent run | SSD reads / agent run |
+| Model | RAM (anon), max | headroom, min | PSI full max | SSD writes / agent run | SSD reads / agent run |
 |---|---|---|---|---|---|
-| Gyro-S, 131K | 22.4 GiB | 7.3 GiB | 0.3% | < 1 MB | ~3 GB |
-| Gyro-S, 262K + vision | 25.0 GiB | 4.7 GiB | — | < 1 MB | ~4 GB |
-| Gyro-M, 131K | 27.1 GiB | 2.5 GiB | 11% (17–27% in mode sweeps) | ~50 MB (logs) | ~78 GB |
+| Gyro-S, 131K | 21.9–22.0 GiB | 7.0–7.1 GiB | 0.3% | < 1 MB | ~3 GB |
+| Gyro-S, 262K + vision | 24.4–24.5 GiB | 4.5–4.6 GiB | — | < 1 MB | ~4 GB |
+| Gyro-M, 131K | 26.5–26.7 GiB | 2.4–2.5 GiB | 11% (17–27% in mode sweeps) | ~50 MB (logs) | ~78 GB |
 
 Experts on GPU at 131K: Gyro-S 8456, Gyro-M 5941. k8v4 = int8 on the 100K recall test (12/12 both).
 Gyro-S MTP4 on vs off: decode ~59 vs ~47 t/s; prefill of ~3K additions 697 vs 980 t/s.
@@ -152,7 +152,7 @@ Real Gyro-M sessions, PSI full sampled every 15 s:
 | KCORES via Pi with vision, medium | 47 | 6% | 2% | 2% | 0.4% | 11.8% |
 | KCORES via Pi with vision, xhigh | 92 | 9% | 3% | 1% | 0.5% | 11.2% |
 
-So in agent work the pressure shows up in short bursts, ~6–9% of the time; min headroom 2.4 GiB. Gyro-M is ~1.3–1.5× slower than Gyro-S: ~16 s vs ~11 s per turn (+3K in, ~500 out), ~47 s vs ~21 s for a fresh 30K prompt.
+So in agent work the pressure shows up in short bursts, ~6–9% of the time; min headroom 2.35 GiB. Gyro-M is ~1.3–1.5× slower than Gyro-S: ~16 s vs ~11 s per turn (+3K in, ~500 out), ~47 s vs ~21 s for a fresh 30K prompt.
 
 **Why SSD writes are tracked.** Strata 0.1.38 + Flash-Next Coder IQ1_M on Windows was dropped because of them
 (it also looped in long answers). Windows paged the experts out to the pagefile: +81 GB host writes in ~35 min in
@@ -162,7 +162,8 @@ On Linux, in a cgroup with `MemorySwapMax=0`, the same engine writes ~0: reads r
 
 **How memory, PSI and SSD were measured.** The server runs as its own systemd unit, so its cgroup holds only the
 model server. Sampled every 15 s in agent runs and every 2 s in benches:
-- RAM: `memory.stat` `anon` and `file`, `memory.peak`; OOM: `memory.events` `oom_kill`; headroom = `MemoryMax` − anon;
+- RAM: `memory.stat` `anon` and `file`, `memory.peak`; OOM: `memory.events` `oom_kill`; headroom = `MemoryMax` (29 GiB = 29696 MiB) − anon; kernel memory of the cgroup (~0.16 GiB: page tables, slab) also counts
+  against the limit, so the real distance to OOM is ~0.15 GiB smaller than the table shows; ranges are over 3–7 agent runs per config;
 - PSI: `/proc/pressure/memory`, the `full avg10` value (share of the last 10 s when all non-idle tasks were stalled
   on memory); the tables give its max and the share of samples above a threshold;
 - SSD: `io.stat` of the server cgroup (`rbytes`, `wbytes`) for the server's own reads and writes, `/proc/diskstats`
@@ -271,6 +272,39 @@ Windows, 20 agent turns on the same bench: HIP 155 s, Vulkan 194 s; decode in tu
 On the AMD driver 32.0.31021 (Adrenalin 26.6.4) Vulkan crashed Windows with BSOD 0x116 three times out of three, even
 at idle ~30 s after load. After updating to Adrenalin 26.9.2 (32.0.32015) the same setup ran ~25 min with no driver events.
 
+## Adaptive KV streaming fork (Qwen 27B at 262K)
+
+[achyudh/llama.cpp `feature/adaptive-kv-stream-rocm`](https://github.com/achyudh/llama.cpp/tree/feature/adaptive-kv-stream-rocm)
+(`9e24be0`): the KV cache lives in host RAM, a fixed window is streamed to the GPU over PCIe, plus RDNA4 kernel fusions.
+The author measured an RX 9070 XT on PCIe 5.0; here it is a non-XT RX 9070 on **PCIe 4.0 x16** (B650). Unsloth UD-IQ4_XS
+(not the author's ASCII-condensed file), mmproj on CPU, KV q8_0/q4_0, `--kv-stream --kv-resident-mib 450
+--kv-resident-mib-decode 1600`, `-b 2048 -ub 512`, MTP + ngram-mod with probabilistic draft sampling. Single runs.
+
+| ctx | spec | depth | prefill | decode | agent turn prefill | agent turn decode |
+|---|---|---|---|---|---|---|
+| 262K | MTP + ngram | 28K | 961 | 62.9 | 582 | 48.2 |
+| 262K | MTP + ngram | 69K | 789 | 64.4 | 465 | 61.1 |
+| 262K | MTP + ngram | 136K | 606 | 31.8 | 333 | 28.7 |
+| 262K | MTP + ngram | 204K | 489 | 18.3 | 262 | 17.6 |
+| 262K | ngram only | 28K | 1023 | 31.9 | 629 | 31.8 |
+| 262K | ngram only | 134K | 648 | 13.8 | 355 | 12.4 |
+| 262K | ngram only | 228K | 488 | 6.0 | 247 | 5.8 |
+| prod r28, 131K | ngram only | 31K / 62K | 954 / 791 | 30.2 / 28.5 | 740 / 556 | 38.3 / 30.7 |
+
+- **Correct:** KLD against clean llama.cpp 0.000000 (en and code). Long-context recall (the test above): 12/12 ×3 at
+  ~100K and ~170K, 11/12 / 12/12 / 12/12 at 241K / 233K / 210K.
+- **Decode** with MTP is 2× r28 up to ~70K, then drops: the KV no longer fits the 1.6 GB window and crosses PCIe 4.0 on
+  every step (~4 GiB at 204K / ~25 GB/s ≈ 6 t/s without MTP, as measured). The author gets 31 t/s at 262K on PCIe 5.0.
+- **Prefill** is not faster than r28; agent-turn additions are ~15% slower (about −15% from the fork itself, measured
+  with ngram only, and ~−8% more from the MTP head reading the prompt).
+- Tuning on this card: `--kv-resident-mib-decode 2100` (the author's value), `--spec-draft-n-max 5`, and `-ub 1024/2048`
+  at 262K do not fit in VRAM (the MTP draft context needs +416 MiB). At ctx 131K, `-ub 1024` fits; a larger `-ub` or a
+  prefill window of 900 MiB do not speed up additions (477–500 t/s at ~60K either way).
+- 20 agent turns from ~32K (+1.6K, 150-token replies): fork 262K 159 s, fork 131K `-ub 1024` 144 s, prod r28 175 s.
+
+² In the Java run the agent let the context grow to 203K without compaction; decode medians by context of its
+requests: 71 (0–64K), 57 (64–128K), 33 (128–192K), 22 t/s (192K+). Same model and task on prod r28 took 49 min.
+
 ## Java agent task ([Pi](https://github.com/earendil-works/pi), 120 min cap)
 
 Multi-module Gradle / Java 21: contract-first SOAP (WSDL + XSD), gRPC inventory, Postgres, AES-256-GCM, Docker Compose,
@@ -292,6 +326,7 @@ with Qwen 27B from the same batch (last column).
 | Qwen3.8-27B UD-IQ4_XS, repeat | 131K | medium | 110 min | failed | — | — |
 | Qwen3.8-27B-pi Q3_K_M | 131K | medium | 68 min | done | 30 | 35 |
 | Swift-1.5 Q3_K_L | 131K | medium | 73 min | failed | — | — |
+| Qwen3.8-27B UD-IQ4_XS, adaptive-KV-stream fork ² | 262K | medium | 78 min | done | 27.5 | 32.5 |
 | Gyro-S | 131K | medium | 21 min | done | 39 | 35.5 |
 | Gyro-S | 131K | xhigh | 33 min | done | 43.5 | 34.5 |
 | Gyro-S | 131K | xhigh | 29 min | done | 36 | 31.5 |
@@ -344,6 +379,11 @@ Gyro kernels on gfx1201: Strata `native_expert_parity` 0 failures, GPU rel. erro
 | OBLITERATUS Q3_K_M | 0.368 | 0.165 | 0.343 |
 
 Same quant, different runtime: r27 vs r4 mean 0.0025 (top-1 98.99%); FA stage cap on vs off 0.000000.
+
+**rdna-boosts r28 is wrong with several sequences in one batch.** Against clean llama.cpp (a0e6dc738), same UD-IQ4_XS,
+`-c 512 --chunks 16`: one sequence per pass (`-b 512`) KLD 0.0025 (en) / 0.0013 (code), but four sequences per pass
+(perplexity's default `-b 2048`) 0.198 / 0.167, PPL +10–13%. A server with `--parallel 1` is likely unaffected (not
+verified); do not use `--parallel > 1` on r28 and measure KLD on it only with `-b 512`. Not re-checked on r84+.
 Gyro (author's numbers, vs Flash-Next Q8_0): S 0.401 (code 0.109), M 0.291 (code 0.066).
 
 ## Configs
