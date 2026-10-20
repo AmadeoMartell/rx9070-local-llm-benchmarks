@@ -302,7 +302,7 @@ The author measured an RX 9070 XT on PCIe 5.0; here it is a non-XT RX 9070 on **
   prefill window of 900 MiB do not speed up additions (477–500 t/s at ~60K either way).
 - 20 agent turns from ~32K (+1.6K, 150-token replies): fork 262K 159 s, fork 131K `-ub 1024` 144 s, prod r28 175 s.
 
-² In the Java run the agent let the context grow to 203K without compaction; decode medians by context of its
+³ In the Java run the agent let the context grow to 203K without compaction; decode medians by context of its
 requests: 71 (0–64K), 57 (64–128K), 33 (128–192K), 22 t/s (192K+). Same model and task on prod r28 took 49 min.
 
 ## Java agent task ([Pi](https://github.com/earendil-works/pi), 120 min cap)
@@ -326,7 +326,7 @@ with Qwen 27B from the same batch (last column).
 | Qwen3.8-27B UD-IQ4_XS, repeat | 131K | medium | 110 min | failed | — | — |
 | Qwen3.8-27B-pi Q3_K_M | 131K | medium | 68 min | done | 30 | 35 |
 | Swift-1.5 Q3_K_L | 131K | medium | 73 min | failed | — | — |
-| Qwen3.8-27B UD-IQ4_XS, adaptive-KV-stream fork ² | 262K | medium | 78 min | done | 27.5 | 32.5 |
+| Qwen3.8-27B UD-IQ4_XS, adaptive-KV-stream fork ³ | 262K | medium | 78 min | done | 27.5 | 32.5 |
 | Gyro-S | 131K | medium | 21 min | done | 39 | 35.5 |
 | Gyro-S | 131K | xhigh | 33 min | done | 43.5 | 34.5 |
 | Gyro-S | 131K | xhigh | 29 min | done | 36 | 31.5 |
