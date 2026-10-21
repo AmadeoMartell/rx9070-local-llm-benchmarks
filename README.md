@@ -16,6 +16,11 @@ Qwen3.8-27B UD-IQ4_XS, llama.cpp r28
   Java task 49 min, the repeat failed
   lowest KLD of the 27B quants measured (0.086 en, 0.023 code)
 
+Gyro-S, Strata 0.2.1 vs rc2 (Oct 21)
+  decode +16%, agent-turn prefill ~2x; same quality (KL 0.018, perplexity within noise, blind review 4 vs 4 runs)
+  KV int8 + --kv-resident 32768 instead of k8v4: prefill 1817 / 2229 t/s at 4K / 16K (k8v4: 1357 / 1492),
+  2046-2077 t/s at 100-210K (k8v4: ~1410), recall 12/12 up to 210K, still 262K ctx; Java runs on it: soon
+
 Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB
 MTP2       Qwen 27B decode 55 vs 31 t/s (Java run medians), but ctx drops from 131K to 81-88K
 Vulkan     llama.cpp, Qwen 27B: HIP is 13-41% faster on prefill at about equal decode
@@ -29,6 +34,7 @@ Speeds in t/s. `depth` = prompt tokens at the measurement, cold prompt unless no
 |---|---|
 | llama.cpp [rdna-boosts](https://github.com/stew675/llama-cpp-rdna-boosts) r27/r28 (HIP), v16 on Windows | dense Qwen3.8-27B quants, Gemma 4, Ornith |
 | [agentionai/Strata](https://github.com/agentionai/Strata) `rc2` (HIP, resident experts) | [Gyro-S / Gyro-M](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF) (Qwen3.8-Flash-Next 125B MoE) |
+| [Niko1221/Strata](https://github.com/Niko1221/Strata) 0.2.0-beta / 0.2.1.3 (engines 0.1.45 / 0.1.46, HIP) | Gyro-S / Gyro-M since Oct 20: own build against the agentionai ggml fork (GYRO.md §1) and the release engine, see [Strata 0.2.1](#strata-021-oct-2026) |
 | Strata 0.1.38–0.1.44 (HIP) | [ISTA-DASLab Flash-Next GSQ-RCO](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF): Coder "IQ1_M" (256 of 512 experts, 3.63 bpw avg), Q2_0 (all experts) |
 
 ## Linux, ROCm 7.2.4 (Oct 2026)
@@ -169,6 +175,79 @@ model server. Sampled every 15 s in agent runs and every 2 s in benches:
 - SSD: `io.stat` of the server cgroup (`rbytes`, `wbytes`) for the server's own reads and writes, `/proc/diskstats`
   for the whole drive, `/proc/vmstat` `pswpout` for swap; drive wear from `smartctl -a -d nvme` (Data Units Written);
 - Windows: SMART host writes before and after a run, plus pagefile size.
+
+## Strata 0.2.1 (Oct 2026)
+
+Gyro-S TQ1_0 unless noted, same model files and MTP head as with rc2, 262K + vision, `--prompt-cache-spread`.
+
+### 0.2.1 vs 0.2.0 vs rc2
+
+| | rc2 | 0.2.0-beta | 0.2.1.3 |
+|---|---|---|---|
+| fresh 26K prompt, t/s (fresh starts) | — | 1100–1109 in 5 of 6 starts, 1408 in 1 | 1405–1410 in 6 of 6 |
+| +1.7K turn on that prompt, t/s | — | 515–524 (slow starts) | 842–872 |
+| Java runs via Pi, xhigh: decode t/s | 54–59 | 65–66 | 65–66 |
+| same runs: agent-turn prefill (0.5–8K appends), t/s | 300–400 | 450–580 | 600–700 |
+
+0.2.0's "slow starts" are the RX 9000 GPU-queue placement that 0.2.1 fixes (Strata docs/AMD_HIP.md, "Fast and slow starts"):
+confirmed here on an RX 9070 (non-XT). 0.2.0 and 0.2.1 built against the agentionai ggml fork give bit-identical greedy
+output (10 of 10 prompts); the 0.2.1 release engine (`strata-engine-0.1.46-linux-x86_64-hip-rx9070`) reads prompts at the
+same speed, decode-path logits are bit-identical to our build, its batched-prompt logits differ slightly (below).
+
+Quality, teacher-forced on Strata's `tools/quant_quality.py` set (5 × 999 positions: code, docs, English, other languages,
+an agent transcript; no Q8_0 reference fits in 32 GB, so engines are compared with each other):
+
+| | top-1 agreement | mean KL | perplexity |
+|---|---|---|---|
+| 0.2.1 own build vs its own repeat (noise floor) | 100% | 0 | 4.457 / 4.457 |
+| 0.2.1 release engine vs own build, decode path | 100% | 0 | 4.457 / 4.457 |
+| 0.2.1 release engine vs own build, prompt path (20 prompts) | 19 of 20 | 0.007 (CPU experts), 0.019 (GPU) | — |
+| rc2 vs 0.2.1, decode path | 95.6% | 0.018 (p99 0.25) | 4.434 vs 4.457 |
+
+rc2 vs 0.2.1: the paired bootstrap 95% interval of the mean log-probability difference, [−0.013, +0.003], includes zero.
+Per segment: −0.9% to +0.4% perplexity, except the agent transcript (+2.9% for 0.2.1, one segment).
+Blind review of the Java task (Pi, xhigh, 4 runs per engine, same batch): 0.2.x 35.9 ± 4.3, rc2 37.6 ± 1.0 /60.
+Strata's docs/GYRO.md says gfx1201 gave "identical output to rc2"; here greedy answers of 0.2.x and rc2 matched in 1 of 10.
+
+### KV type and `--kv-resident` (0.2.1 release engine)
+
+Fresh engine per row, our settings (reasoning budget 24576), only the KV type, ctx and `--kv-resident` change.
+Strata's standard prompts (thinking on, xhigh), medians of 3; 100K = one ~90K-token needle prompt.
+
+| Model | ctx | KV | `--kv-resident` | experts on GPU | prefill 4K / 16K | decode 4K / 16K | prefill / decode at 100K | recall @100K |
+|---|---|---|---|---|---|---|---|---|
+| Gyro-S | 262K | k8v4 | — | 7195 | 1357 / 1492 | 62.9 / 63.1 | 1412 / 73.8 | 12/12 |
+| Gyro-S | 131K | int8 | — | 8434 | 1820 / 2232 | 70.0 / 66.7 | 2095 / 82.5 | 12/12 |
+| Gyro-S | 131K | k8v4 | — | 8794 | 1371 / 1494 | 69.5 / 67.0 | 1408 / 78.8 | 12/12 |
+| **Gyro-S** | **262K** | **int8** | **32768** | **9505** | **1817 / 2229** | **67.1 / 71.2** | **2077 / 79.5** | **12/12** |
+| Gyro-S | 262K | k8v4 | 32768 | 9595 | 1370 / 1471 | 68.5 / 62.4 | 1402 / 79.9 | 12/12 |
+| Gyro-M | 131K | k8v4 | — | 6218 | 590 / 845 | 58.7 / 51.1 | 1257 / 74.1 | 12/12 |
+| **Gyro-M** | **131K** | **int8** | **32768** | **6972** | **653 / 1125** | **56.3 / 55.0** | **1744 / 70.3** | **12/12** |
+
+- **The prefill speed follows the KV type, not the window:** k8v4 stays at ~1.4K t/s with any ctx and any number of
+  experts on the GPU; int8 reads 1.8–2.2K. The window moves decode (fewer experts fit next to a bigger KV). The
+  matrix-core prompt attention reports "on" in every row, so it is not the cause; why k8v4 is slower is not resolved.
+- **`--kv-resident 32768`** keeps only the newest 32K tokens of KV in VRAM and streams the rest from RAM: 262K with int8 KV
+  gets the most experts on the GPU and the 131K/int8 speed. Gyro-S, own 0.2.1 build, 262K int8 `--kv-resident 32768`:
+  recall at 183K and 210K tokens 12/12 on two seeds, prefill 2059 / 2046 t/s, decode 77–80 t/s at that depth
+  (k8v4 read 174K at ~1400 t/s).
+- Gyro-M gains less: prefill +11–39%, decode −5% to +8%.
+- Not measured yet: the Java task on int8 + `--kv-resident` (runs follow soon), RAM on this config: the engine locks
+  18.7–20.3 GiB of experts in every row, but cgroup `anon` reads 23 GB at 262K and 2.8 GB at 131K, so anon-based headroom
+  is not comparable across these rows.
+
+### Strata standard benchmark (`strata bench run`, protocol `strata-qwen38-thinking-v1-draft.1`)
+
+0.2.1 release engine, the runner starts the engine itself, fresh load, loopback, thinking xhigh, 512-token output cap
+(capped answers count as `truncated` there), 12 sanity checks:
+
+| Config | prefill 4K / 16K | decode 4K / 16K | TTFT 16K | capped (of 9) | sanity |
+|---|---|---|---|---|---|
+| ours: 262K, k8v4, spread, vision, budget 24576 | 997–1028 / 1334–1369 | 61.6–62.9 / 64.3–64.8 | 12.0–12.3 s | 4–5 | 12/12 |
+| Strata GYRO.md §4: 131K, int8 | 1821–1824 / 1734–2228 | 68.1–72.5 / 62.7–62.8 | 7.4–9.5 s | 2–4 | 12/12 |
+
+Ranges = medians of two report runs per config. In these report runs 2 of 3 4K prompts of the 262K/k8v4 config read at ~1000 t/s against
+1357 in the KV table above (same engine and pinning); not explained.
 
 ## Windows 11 (Sep–Oct 2026)
 
@@ -340,6 +419,28 @@ with Qwen 27B from the same batch (last column).
 | Qwen3.8-27B Fable i1-IQ3_M (Windows) | 106K | medium | — | 4/8 checklist | 18 (other batch) | — |
 
 ¹ Waiting on `search.maven.org`: ~17 min (Gyro-S), ~9 min (Gyro-M). It also returned stale versions (grpc-api 1.73.0 vs 1.85.0 in `repo1`).
+
+Strata rc2 vs 0.2.x, Gyro-S + vision, 262K, xhigh, Pi, one blind review batch (projects renamed, the reviewers did not
+know the engine): 0.2.x 39, 39, 35.5, 30 (mean 35.9); rc2 38.5, 38.5, 37, 36.5 (mean 37.6). Agent time 27–73 min
+(0.2.x) and 16–39 min (rc2): set by how much work the agent chose (81–97K vs 42–80K generated tokens), not by the engine.
+
+Agent harnesses, same model and server (Gyro-M + vision, 131K, xhigh, Strata 0.2.1), one blind batch:
+
+| Harness | time | tool calls | generated | review /60 |
+|---|---|---|---|---|
+| [Pi](https://github.com/earendil-works/pi) 1.2.0 | 47 min | 162 | 99K | 33.5 |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 0.2.1-rc.2 | 46 min | 166 | 104K | 31 |
+| [oh-my-pi](https://github.com/can1357/oh-my-pi) 18.12.5 | 120 min (cap) | 366 | 287K | 42.5 |
+| Pi 1.2.0 on Strata rc2 (anchor) | 38 min | 146 | 84K | 33 |
+
+The same rc2 project scored 41 in the previous batch: the reviewers drift a lot, compare within a batch only.
+oh-my-pi wrote a custom XJC plugin to put Bean Validation on the generated SOAP types (true contract-first, the most
+complete tests) but needed 2.5× the time: answers twice as long (~1.4K vs ~0.7K tokens per request), probe scripts and
+library internals first, tests late (its system prompt asks for throwaway probe scripts and "new tests only for
+uncertain edges"). DeepSeek Harness vs Pi over five same-condition pairs: −2, 0, −4, −5, −5 points (it exposes every MCP tool
+directly: 70 tools per request vs Pi's 26, and runs PowerShell on Windows). One run per cell: not a ranking.
+Side model calls (session titles, recaps, subagents, background compaction) were switched off in DeepSeek Harness and oh-my-pi:
+on a single local server each of them evicts the agent's prompt cache.
 
 ## Quality checks
 
