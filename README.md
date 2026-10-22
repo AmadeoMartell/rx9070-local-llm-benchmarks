@@ -20,6 +20,11 @@ Gyro-S, Strata 0.2.1 vs rc2 (Oct 21)
   decode +16%, agent-turn prefill ~2x; same quality (KL 0.018, perplexity within noise, blind review 4 vs 4 runs)
   KV int8 + --kv-resident 32768 instead of k8v4: prefill 1817 / 2229 t/s at 4K / 16K (k8v4: 1357 / 1492),
   2046-2077 t/s at 100-210K (k8v4: ~1410), recall 12/12 up to 210K, still 262K ctx; Java task on it: done in 29 min, review within noise, now our Gyro-S config
+  Gyro-S on this config is our always-on server since Oct 22 (replaced Qwen 27B)
+
+Gyro-S abliterated (Huihui), same engine and settings (Oct 22)
+  equal to stock Gyro-S on every check: questions 14/14, long answers 0 of 8 degenerate, recall 12/12 at 183K and 210K,
+  same speed; Java task (medium) done in 21 min, review 41 vs 38 for stock in the same batch (within noise)
 
 Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB
 MTP2       Qwen 27B decode 55 vs 31 t/s (Java run medians), but ctx drops from 131K to 81-88K
@@ -430,12 +435,17 @@ with Qwen 27B from the same batch (last column).
 | Gyro-S + vision | 262K | medium | 48 min¹ | done | 43.5 | 29 |
 | Gyro-M | 131K | xhigh | 37 min | done | 42.5 | 34 |
 | Gyro-M | 131K | medium | 53 min¹ | done | 44 | 29 |
+| Gyro-S + vision, Strata 0.2.1, int8 + `--kv-resident 32768`, Pi 1.4.0 | 262K | medium | 36 min | done | 38 | — ⁴ |
+| Gyro-S abliterated + vision, same settings, Pi 1.4.0 | 262K | medium | 21 min | done | 41 | — ⁴ |
 | Qwen3.8-27B UD-IQ4_XS (Windows, r28) | 106K | medium | 55 min | 7/8 checklist | — | — |
 | Qwen3.8-27B GSQ IQ3_S q8_0 KV (Windows) | 106K | medium | 65 min | 7/8 checklist | — | — |
 | Qwen3.8-27B heretic-ara IQ4_XS (Windows) | 106K | medium | — | 5/8 checklist | 22 (other batch) | — |
 | Qwen3.8-27B Fable i1-IQ3_M (Windows) | 106K | medium | — | 4/8 checklist | 18 (other batch) | — |
 
 ¹ Waiting on `search.maven.org`: ~17 min (Gyro-S), ~9 min (Gyro-M). It also returned stale versions (grpc-api 1.73.0 vs 1.85.0 in `repo1`).
+⁴ One blind batch with just these two projects (Claude / Codex: stock 41/35, abliterated 44/38). Both had the same kind
+of top defects: a fixed `PII_KEY` in docker-compose and no stock compensation when the order insert fails after the
+reservation. Abliterated used 117 tool calls vs 220 for stock; decode 68–74 t/s, PSI 0, 3–4 GB SSD reads per run for both.
 
 Strata rc2 vs 0.2.x, Gyro-S + vision, 262K, xhigh, Pi, one blind review batch (projects renamed, the reviewers did not
 know the engine): 0.2.x 39, 39, 35.5, 30 (mean 35.9); rc2 38.5, 38.5, 37, 36.5 (mean 37.6). Agent time 27–73 min
@@ -478,6 +488,13 @@ on a single local server each of them evicts the agent's prompt cache.
 and 2 of 3 (Gyro-M, Qwen 27B). With vision the agent ran its program, looked at screenshots and fixed it: every run
 ended with a working program, but none of them noticed from the screenshots that the digits on the balls must rotate,
 not just move along. For Gyro-S xhigh one remark about it was enough to fix that (88).
+
+[Gyro-S abliterated (Huihui)](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-abliterated-Huihui-GGUF) TQ1_0,
+Strata 0.2.1, 262K int8 `--kv-resident 32768`, against stock Gyro-S on the same server: questions 14 of 14 (stock 14),
+degenerate long answers 0 of 8 (stock 0), recall 12/12 at 183K and 210K, `native_expert_parity` 0 failures. A probe of
+8 legal but edgy requests (profane roast, lock picking, violent fiction, dark jokes, dangerous chemical mixes, flirting,
+skipping the Microsoft account in Windows setup, a drug-legalization essay): neither model refused any, with no
+disclaimers, so this probe does not show what abliteration changes.
 
 Flash-Next Coder IQ1_M (half the experts): 3–4 of 8 long answers degenerated (`java java …`, line loops), also in deterministic mode.
 Gyro kernels on gfx1201: Strata `native_expert_parity` 0 failures, GPU rel. error 1.8–2.0% (bound 3%).
