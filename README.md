@@ -19,7 +19,7 @@ Qwen3.8-27B UD-IQ4_XS, llama.cpp r28
 Gyro-S, Strata 0.2.1 vs rc2 (Oct 21)
   decode +16%, agent-turn prefill ~2x; same quality (KL 0.018, perplexity within noise, blind review 4 vs 4 runs)
   KV int8 + --kv-resident 32768 instead of k8v4: prefill 1817 / 2229 t/s at 4K / 16K (k8v4: 1357 / 1492),
-  2046-2077 t/s at 100-210K (k8v4: ~1410), recall 12/12 up to 210K, still 262K ctx; Java runs on it: soon
+  2046-2077 t/s at 100-210K (k8v4: ~1410), recall 12/12 up to 210K, still 262K ctx; Java task on it: done in 29 min, review within noise, now our Gyro-S config
 
 Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB
 MTP2       Qwen 27B decode 55 vs 31 t/s (Java run medians), but ctx drops from 131K to 81-88K
@@ -232,9 +232,26 @@ Strata's standard prompts (thinking on, xhigh), medians of 3; 100K = one ~90K-to
   recall at 183K and 210K tokens 12/12 on two seeds, prefill 2059 / 2046 t/s, decode 77–80 t/s at that depth
   (k8v4 read 174K at ~1400 t/s).
 - Gyro-M gains less: prefill +11–39%, decode −5% to +8%.
-- Not measured yet: the Java task on int8 + `--kv-resident` (runs follow soon), RAM on this config: the engine locks
-  18.7–20.3 GiB of experts in every row, but cgroup `anon` reads 23 GB at 262K and 2.8 GB at 131K, so anon-based headroom
-  is not comparable across these rows.
+- RAM: the engine locks 18.7–20.3 GiB of experts in every row, but cgroup `anon` reads 23 GB at 262K and 2.8 GB at
+  131K, so anon-based headroom is not comparable across these rows.
+
+Java task (Pi, xhigh, own 0.2.1 build, our settings), int8 against k8v4:
+
+| Model | KV | time | result | decode t/s (median) | agent-turn prefill t/s | MTP | SSD reads | PSI full > 1% / mean | review /60 |
+|---|---|---|---|---|---|---|---|---|---|
+| Gyro-S 262K | k8v4 | 73 / 27 min | done ×2 | 65.2 / 65.6 | 706 / 596 | 68.6 / 68.8% | — | — | 37.5 / 35 |
+| Gyro-S 262K | **int8 + `--kv-resident 32768`** | 29 min | done | **69.6** (71.8) | **736** | 69.8% | — | — | 34 |
+| Gyro-M 131K | k8v4 | 47 min | done | 57.5 (60.1) | 340 | 68.8% | 203 GB/h | 6% / 0.27% | — |
+| Gyro-M 131K | int8 (Strata default) | 40 min | done | 57.2 (59.5) | 317 | 70.7% | 330 GB/h | 9% / 0.36% | — |
+| Gyro-M 131K | int8 + `--kv-resident 32768` | 34 min | done | 56.8 (59.1) | 279 | 71.0% | 437 GB/h | 10% / 0.43% | — |
+
+Review: one blind batch for the three Gyro-S projects (Claude / Codex: 42/33, 40/30 for k8v4; 36/32 for int8):
+inside the reviewer noise. Agent time is set by how much work the agent chose, not by the engine.
+**What we run now:** Gyro-S on int8 + `--kv-resident 32768` (prompts ~1.5× faster at the same 262K, decode +7%);
+Gyro-M stays on k8v4. For Gyro-M int8 only helps big fresh prompts (1418–1744 vs 1257 t/s at 100K); agent turns are small
+appends, where all three read ~280–340 t/s, while RAM pressure and SSD reads go up. Strata's GYRO.md lists 35 GB of
+VRAM + RAM for Gyro-M; here the server's cgroup has 29 GB, so the rest is read from the SSD (about half of the file is
+the n-gram table, read for every token).
 
 ### Strata standard benchmark (`strata bench run`, protocol `strata-qwen38-thinking-v1-draft.1`)
 
