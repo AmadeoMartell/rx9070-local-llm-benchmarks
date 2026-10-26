@@ -32,6 +32,7 @@ Gyro-M tuned for 16 + 32 GB (Oct 24-26), Strata main + one-line HIP patch, 196K 
   Java task xhigh: 2 of 2 done in 27 / 25 min; blind review above Gyro-S in both batches (+2..+4 /60)
   fresh prompts still ~1.7x slower than Gyro-S (twice the expert bytes): 1100-1150 vs 1900-2000 t/s
 
+EXL3       Flash-Next 2.18 bpw (ExLlamaV3 + TabbyAPI, Oct 26): max 65K, decode 36, fresh 32K prompt 686 (Gyro-M: 196K, 76, ~1150)
 Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB (Strata rc2, before the tuning)
 MTP2       Qwen 27B decode 55 vs 31 t/s (Java run medians), but ctx drops from 131K to 81-88K
 Vulkan     llama.cpp, Qwen 27B: HIP is 13-41% faster on prefill at about equal decode
@@ -47,6 +48,7 @@ Speeds in t/s. `depth` = prompt tokens at the measurement, cold prompt unless no
 | [agentionai/Strata](https://github.com/agentionai/Strata) `rc2` (HIP, resident experts) | [Gyro-S / Gyro-M](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF) (Qwen3.8-Flash-Next 125B MoE) |
 | [Niko1221/Strata](https://github.com/Niko1221/Strata) 0.2.0-beta / 0.2.1.3 (engines 0.1.45 / 0.1.46, HIP) | Gyro-S / Gyro-M since Oct 20: own build against the agentionai ggml fork (GYRO.md §1) and the release engine, see [Strata 0.2.1](#strata-021-oct-2026) |
 | [Niko1221/Strata](https://github.com/Niko1221/Strata) main `7dd5cf18` (0.2.4.2) + [one-line patch](configs/strata-hip-tq-sub8.patch), built with `-DSTRATA_PREFILL_MMQ=ON` | Gyro-M since Oct 25, see [Gyro-M on 16 + 32 GB](#gyro-m-on-16--32-gb-tuning-oct-2426) |
+| [ExLlamaV3](https://github.com/turboderp-org/exllamav3) v1.6.5 (ROCm build) + [TabbyAPI](https://github.com/theroyallab/tabbyAPI) `564f8fbb2` | [turboderp Flash-Next EXL3](https://huggingface.co/turboderp/Qwen3.8-Flash-Next-exl3) SC 2.18 bpw, one test, see [Flash-Next in EXL3](#flash-next-in-exl3-exllamav3-on-16--32-gb-oct-26) |
 | Strata 0.1.38–0.1.44 (HIP) | [ISTA-DASLab Flash-Next GSQ-RCO](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF): Coder "IQ1_M" (256 of 512 experts, 3.63 bpw avg), Q2_0 (all experts) |
 
 ## Linux, ROCm 7.2.4 (Oct 2026)
@@ -375,6 +377,22 @@ compensation when the order insert fails after the reservation, and a fixed `PII
 LiveCodeBench v6 (175 problems, Jan–Apr 2025, LCB generic prompt, xhigh, 64K output cap, temperature 1.0): only 5 done
 so far, 4 pass; the failed one stopped at the reasoning budget (49,152 tokens). Full run pending; references: ISTA-DASLab
 BF16 87.4, GSQ IQ3_XXS 86.3, Q2_0 81.1.
+
+## Flash-Next in EXL3 (ExLlamaV3) on 16 + 32 GB (Oct 26)
+
+turboderp SC 2.18 bpw (KLD 0.300 vs Gyro-M 0.291 by the Gyro card), ExLlamaV3 v1.6.5 ROCm build + TabbyAPI, KV `8,8`, MTP,
+392 of 512 experts per layer on the CPU, `dec-ab`, temperature 0.
+
+| | EXL3 2.18 | Gyro-M finalist |
+|---|---|---|
+| max ctx | 65K ⁶ | 196K |
+| decode (`gen1k`) | 35.9 | ~76.5 |
+| fresh 32K prompt | 686 | 1144–1153 |
+| +2K turn at 32K | 549 | 780–844 |
+| free RAM, min | 1.7 GB | 1.71 GiB |
+
+⁶ 131K with int8 KV runs out of VRAM or RAM at every split (360–400 experts on the CPU); ExLlamaV3 cannot stream experts
+from the SSD. Settings: token embeddings from disk, chunk 1024, `EXL3_MOE_HOST_CORES=0`.
 
 ## Windows 11 (Sep–Oct 2026)
 
