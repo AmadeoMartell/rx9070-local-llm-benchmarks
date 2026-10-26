@@ -26,7 +26,13 @@ Gyro-S abliterated (Huihui), same engine and settings (Oct 22)
   equal to stock Gyro-S on every check: questions 14/14, long answers 0 of 8 degenerate, recall 12/12 at 183K and 210K,
   same speed; Java task (medium) done in 21 min, review 41 vs 38 for stock in the same batch (within noise)
 
-Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB
+Gyro-M tuned for 16 + 32 GB (Oct 24-26), Strata main + one-line HIP patch, 196K int8 KV
+  decode 76 t/s short / 58 at 180K / 66-67 in Java agent runs (was 56-58 / - / 52-57); 196K ctx (was 131K)
+  0 expert reads from the SSD (13 GB per fresh 32K prompt with --prefill 4096), PSI 0, >= 1.7 GiB RAM headroom
+  Java task xhigh: 2 of 2 done in 27 / 25 min; blind review above Gyro-S in both batches (+2..+4 /60)
+  fresh prompts still ~1.7x slower than Gyro-S (twice the expert bytes): 1100-1150 vs 1900-2000 t/s
+
+Gyro-M     1014 / 50 at 106K; review scores within noise of Gyro-S; ~2.4 GiB RAM headroom on 32 GB (Strata rc2, before the tuning)
 MTP2       Qwen 27B decode 55 vs 31 t/s (Java run medians), but ctx drops from 131K to 81-88K
 Vulkan     llama.cpp, Qwen 27B: HIP is 13-41% faster on prefill at about equal decode
 SSD        Strata on Windows paged experts out: 70-110 GB/h of writes; Linux + cgroup without swap: ~0
@@ -40,6 +46,7 @@ Speeds in t/s. `depth` = prompt tokens at the measurement, cold prompt unless no
 | llama.cpp [rdna-boosts](https://github.com/stew675/llama-cpp-rdna-boosts) r27/r28 (HIP), v16 on Windows | dense Qwen3.8-27B quants, Gemma 4, Ornith |
 | [agentionai/Strata](https://github.com/agentionai/Strata) `rc2` (HIP, resident experts) | [Gyro-S / Gyro-M](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF) (Qwen3.8-Flash-Next 125B MoE) |
 | [Niko1221/Strata](https://github.com/Niko1221/Strata) 0.2.0-beta / 0.2.1.3 (engines 0.1.45 / 0.1.46, HIP) | Gyro-S / Gyro-M since Oct 20: own build against the agentionai ggml fork (GYRO.md §1) and the release engine, see [Strata 0.2.1](#strata-021-oct-2026) |
+| [Niko1221/Strata](https://github.com/Niko1221/Strata) main `7dd5cf18` (0.2.4.2) + [one-line patch](configs/strata-hip-tq-sub8.patch), built with `-DSTRATA_PREFILL_MMQ=ON` | Gyro-M since Oct 25, see [Gyro-M on 16 + 32 GB](#gyro-m-on-16--32-gb-tuning-oct-2426) |
 | Strata 0.1.38–0.1.44 (HIP) | [ISTA-DASLab Flash-Next GSQ-RCO](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF): Coder "IQ1_M" (256 of 512 experts, 3.63 bpw avg), Q2_0 (all experts) |
 
 ## Linux, ROCm 7.2.4 (Oct 2026)
@@ -129,6 +136,7 @@ llama-bench pp2048 / tg128, Qwen3.8-27B UD-IQ4_XS, HIP: prefill 1183, decode 33.
 | Gyro-S, 131K | 21.9–22.0 GiB | 7.0–7.1 GiB | 0.3% | < 1 MB | ~3 GB |
 | Gyro-S, 262K + vision | 24.4–24.5 GiB | 4.5–4.6 GiB | — | < 1 MB | ~4 GB |
 | Gyro-M, 131K | 26.5–26.7 GiB | 2.4–2.5 GiB | 11% (17–27% in mode sweeps) | ~50 MB (logs) | ~78 GB |
+| Gyro-M finalist, 196K int8 (Oct 25) | 26.9–27.2 GiB | 1.84 GiB | 0 | 42–54 MB (logs) | ~4 GB (n-gram table only) |
 
 Experts on GPU at 131K: Gyro-S 8456, Gyro-M 5941. k8v4 = int8 on the 100K recall test (12/12 both).
 Gyro-S MTP4 on vs off: decode ~59 vs ~47 t/s; prefill of ~3K additions 697 vs 980 t/s.
@@ -270,6 +278,103 @@ the n-gram table, read for every token).
 
 Ranges = medians of two report runs per config. In these report runs 2 of 3 4K prompts of the 262K/k8v4 config read at ~1000 t/s against
 1357 in the KV table above (same engine and pinning); not explained.
+
+## Gyro-M on 16 + 32 GB: tuning (Oct 24–26)
+
+Goal: make Gyro-M (better code than Gyro-S in our reviews, ~IQ3_XXS quality by the authors' KLD) usable as the daily
+server on this box. Limits we set: **no expert reads from the SSD**, **≥ 1.5–2 GiB RAM headroom** to the 29 GB cgroup
+cap, **KV not below int8** (no q4_0 KV), no image encoder (it needs ~0.95 GiB of RAM that is not there at 196K).
+Benches: `dec-ab` (temperature 0; `gen1k` = 1024 tokens of Java from a short prompt; `f32` / `f180` = fresh 32K / 180K
+prompt; `t32` = +2K turn on it), cold engine start per row, A/B in ABBA order with bootstrap 95% intervals over starts.
+
+### What changed, one step at a time
+
+| Step | Effect (measured) |
+|---|---|
+| `--prefill 2048` + `STRATA_RESIDENT_HEADROOM_GIB=2` + `--prompt-cache 2` | the prompt path borrows only slots whose experts are also in RAM (845 of 845): SSD expert reads per fresh 32K prompt 13 GB → 0 (`--prefill 4096`: 13 GB, 32–35 GB on a fresh 100K) |
+| KV `int8` instead of `k8v4` | fresh prompt +35% (1540 vs 1140 t/s at 131K); k8v4 caps prompts at ~1.4K t/s, as on Gyro-S |
+| `--mtp-draft-vocab data/draft_vocab_cyrillic.bin` | +99 experts on the GPU, −130 MiB RAM, decode not lower |
+| Strata main `7dd5cf18` built with `-DSTRATA_PREFILL_MMQ=ON` | prompt = 0.2.1 (±2%); without MMQ the expert GEMMs of the prompt run in FP16 and prompts are ~35% slower |
+| `STRATA_EXCHANGE_ROTATE=1` | agent-turn time −4.8% [−7.8, −1.8], 8 + 8 cold starts |
+| `STRATA_TQ_SUB8=1` with [the patch](configs/strata-hip-tq-sub8.patch) (lets the CUDA-only staged trellis kernel run on HIP, opt-in) | decode +7.1% [+6.6, +7.6] at 196K, +7.3% [+6.0, +8.7] at 131K; teacher-forced KL vs off: 0 (top-1 100%, 2 runs, 4995 positions) |
+
+Result, Gyro-M TQ2_0, MTP4, int8 KV, resident experts:
+
+| Config | experts on GPU | decode (`gen1k`) | decode at 180K | fresh prompt | +2K turn | RAM headroom, min |
+|---|---|---|---|---|---|---|
+| start, Oct 24 (0.2.1, 131K, int8 + `--kv-resident 32768`, vision; or k8v4 without vision) | 6952 / 6198 | 56–58 ⁵ | — | 600–1115 (4K–16K) ⁵ | — | — |
+| finalist 131K, `--prefill 3072`, `--prompt-cache 3` | 6008 | ~76 | — | 1450–1550 (32K) | ~1000 (at 32K) | 2.17 GiB |
+| **finalist 196K** (config: [strata-gyro-m-196k-int8-finalist.json](configs/strata-gyro-m-196k-int8-finalist.json)) | 5210–5221 | **~76.5** | **~58** | 1050–1150 (32K–180K) | 780–1000 (at 28K–110K) | 1.71 GiB (bench), 1.84 GiB (agent runs) |
+
+⁵ Measured with `strata bench` (4K / 16K prompts), not `dec-ab`; the 32K fresh prompt on 0.2.1 with k8v4 read ~1140 t/s.
+
+- **262K does not fit** these limits: with k8v4 (int8 is bigger) the prompt path covers 645 of 845 slots, a fresh prompt
+  reads 7–14 GB of experts from the SSD, 815 t/s at 240K. It needs ~0.5–1 GiB more RAM.
+- **Did not help** (one cold start each on top of the 131K config; ~70 decode / ~1530 prompt / ~1000 turn = noise band):
+  `HIP_QUEUE_PRIME=0` (prompt 863), `MTP_SIDE_STREAM=1` (1163), `GDN_SPLIT=1` (1261), `B6_MMVQ_ROWS=1` (1299),
+  `SH_STREAM=1` (decode 63), `SIDE_MIXER=2` (decode 51); `SPEC_COST`, `ADAPT_OVERLAP`, `TSUM`, `LFUSE`, `QFUSE`, `PLE_BATCH`,
+  `MMVF_ROWS`, `ATTN_LANECELL`, `ATTN_DAILY`, `GR_UP75`, `GR_DOWN_TG`, `QSA_ROWS` within noise. `--kv-resident` costs Gyro-M
+  more RAM than KV in VRAM. Forcing the GPU power profile to `high` was slower.
+- **Approximations that stay on** (Strata's gfx12 defaults, also on our Gyro-S): `ROUTE_TAIL_SKIP=7` — turning it off costs
+  −9.6% decode, +9.9% turn time; KL vs off ≤ 0.053 (upper bound: the test tool's expert-cache hit rate was 28–79%, the
+  server's is 88–93%). `HC_Q8` — off costs −4.9% decode and 0.4 GiB of RAM headroom; KL 0.021.
+- **Memory rule of thumb** that held to the MiB: every MiB of VRAM not used for experts (bigger KV, prompt buffers)
+  moves the same amount of experts into RAM.
+
+### Where the time goes
+
+Prompt-path phases (`STRATA_PREFILL_TIMING=1`), 3 passes each, fresh engine; read speeds from the engine log:
+
+| | Gyro-M finalist 196K | Gyro-S, Oct 22 server (0.2.1, 262K, int8 + `--kv-resident 32768`) |
+|---|---|---|
+| fresh 26–31K prompt | 1144–1153 (one slow: 775) | 1926–2011 (one slow: 1346) |
+| fresh 97–111K prompt | 876–1012 | 1469–1987 |
+| +2K turn at ~28K | 780–844 | 1123–1155 (one slow: 629) |
+| +2K turn at ~100K | 950–995 | 1069–1087 (one slow: 562) |
+
+- Attention (QSA select + attn) is ~5–6% of a turn on both at 100K: depth is not what slows Gyro-M down. Expert GEMMs,
+  gathering and copies are ~65%; Gyro-M's experts are twice the bytes of Gyro-S's.
+- **Slow fresh prompts** (~1 in 10, at 55–65% speed; the gather phase takes 3–4× longer) happen on both models, with and
+  without `EXCHANGE_ROTATE`; a patch that skips repeated stream waits in the prompt path did not change them. Cost:
+  ~−4% on average fresh-prompt speed. Not resolved.
+- **Decode speed follows MTP draft acceptance**, not context depth (hybrid model: GDN layers + sparse QSA attention):
+
+  | Workload | MTP accepted | decode t/s |
+  |---|---|---|
+  | `dec-ab` runs, temperature 0 (code + short answers) | 78–79% | 72–74 (`gen1k` alone: 76.5) |
+  | Java agent run, temperature 1.0 (code, tool calls) | 69% | 65.8 |
+  | LiveCodeBench reasoning, temperature 1.0, 12–50K tokens per answer | 65% | 61.0 |
+  | Java run by context of the request: 0–40K / 40–80K / 80–120K | 63% / 72% / 70% | 63.6 / 67.9 / 65.2 |
+
+- **SSD reads while serving are the n-gram table, not experts.** Flash-Next keeps a 320M-row n-gram embedding table in the GGUF
+  (about half of the 92 GB Gyro-M file) that is never loaded into RAM: 16 rows per token are read with 4 KiB `O_DIRECT` reads (seen with
+  bpftrace in Strata's `ngram/ple_reader` thread; row cache 1M rows by default). ~0.8 GB per fresh 32K prompt, ~2 MB/s
+  in agent work, ~4 GB per Java run. Strata's own counter shows 0 expert reads.
+
+### Java task on the finalist (Pi, xhigh, budget 24576)
+
+| Run | time | tool calls | max context | decode median (p10–p90) | prefill ≥ 8K / turns 0.5–8K | RAM headroom min | SSD writes |
+|---|---|---|---|---|---|---|---|
+| 1 | 27 min, done | 131 | 120.7K | 66 (58–78) | 1144 / 510 | 1838 MiB | 54 MB |
+| 2 | 25 min, done | 95 | 100.9K | 67 (59–76) | 1131 / 583 | 1845 MiB | 42 MB |
+
+No context compaction, PSI 0, no OOM; GPU hotspot ≤ 76 °C, ≤ 267 W. Same task before the tuning (Gyro-M, Strata rc2 /
+0.2.1, 131K): 34–47 min, decode 52–57. Gyro-S xhigh on the Oct 22 server: 29 min, decode 66–67.
+
+Blind reviews (three projects per batch, renamed; Claude / Codex, /60):
+
+| Batch | Gyro-M finalist | Gyro-M, Oct 22 (0.2.1, 131K int8, vision) | Gyro-S, Oct 22 server |
+|---|---|---|---|
+| 25 | run 1: 45 / 37 | 45 / 39 | 41 / 34 |
+| 26 | run 1: 41 / 36, run 2: 42 / 34 | — | 39 / 32 |
+
+Gyro-M scored above Gyro-S in every pair (generated server-side order ids and correct SOAP fault codes vs client order ids
+and all faults as `Client`, a connection pool, order-independent tests). All projects share two defects: no stock
+compensation when the order insert fails after the reservation, and a fixed `PII_KEY` in docker-compose.
+
+LiveCodeBench v6 (175 problems, Jan–Apr 2025, LCB generic prompt, xhigh, 64K output cap, temperature 1.0): only 5 done
+so far, 4 pass; the failed one stopped at the reasoning budget (49,152 tokens). Full run pending; references: ISTA-DASLab
+BF16 87.4, GSQ IQ3_XXS 86.3, Q2_0 81.1.
 
 ## Windows 11 (Sep–Oct 2026)
 
@@ -437,6 +542,8 @@ with Qwen 27B from the same batch (last column).
 | Gyro-M | 131K | medium | 53 min¹ | done | 44 | 29 |
 | Gyro-S + vision, Strata 0.2.1, int8 + `--kv-resident 32768`, Pi 1.4.0 | 262K | medium | 36 min | done | 38 | — ⁴ |
 | Gyro-S abliterated + vision, same settings, Pi 1.4.0 | 262K | medium | 21 min | done | 41 | — ⁴ |
+| Gyro-M tuned (Strata main + sub8 + rotate, int8, no vision) | 196K | xhigh | 27 min | done | 41 / 38.5 (two batches) | — ⁶ |
+| same, repeat | 196K | xhigh | 25 min | done | 38 | — ⁶ |
 | Qwen3.8-27B UD-IQ4_XS (Windows, r28) | 106K | medium | 55 min | 7/8 checklist | — | — |
 | Qwen3.8-27B GSQ IQ3_S q8_0 KV (Windows) | 106K | medium | 65 min | 7/8 checklist | — | — |
 | Qwen3.8-27B heretic-ara IQ4_XS (Windows) | 106K | medium | — | 5/8 checklist | 22 (other batch) | — |
@@ -446,6 +553,8 @@ with Qwen 27B from the same batch (last column).
 ⁴ One blind batch with just these two projects (Claude / Codex: stock 41/35, abliterated 44/38). Both had the same kind
 of top defects: a fixed `PII_KEY` in docker-compose and no stock compensation when the order insert fails after the
 reservation. Abliterated used 117 tool calls vs 220 for stock; decode 68–74 t/s, PSI 0, 3–4 GB SSD reads per run for both.
+
+⁶ Same batches, Gyro-S xhigh on the Oct 22 server: 37.5 and 35.5; details in [Gyro-M on 16 + 32 GB](#java-task-on-the-finalist-pi-xhigh-budget-24576).
 
 Strata rc2 vs 0.2.x, Gyro-S + vision, 262K, xhigh, Pi, one blind review batch (projects renamed, the reviewers did not
 know the engine): 0.2.x 39, 39, 35.5, 30 (mean 35.9); rc2 38.5, 38.5, 37, 36.5 (mean 37.6). Agent time 27–73 min

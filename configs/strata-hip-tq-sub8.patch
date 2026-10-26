@@ -1,0 +1,26 @@
+diff --git a/src/kernels/cuda/iq_kernels.cu b/src/kernels/cuda/iq_kernels.cu
+index d2f2e34e..611809bf 100644
+--- a/src/kernels/cuda/iq_kernels.cu
++++ b/src/kernels/cuda/iq_kernels.cu
+@@ -3332,17 +3332,17 @@ bool tq_stage_on() {
+ // token) gate/up 221 -> 140 us and down 182 -> 86 us.  Bitwise the same sums as before.  STRATA_TQ_STAGE=0 or STRATA_TQ_SUB8=0 turn it off
+ // (CUDA only: the AMD builds keep the old kernels), STRATA_IQ_STAGE_GRID=0 as for every staged table.
+ bool tq_sub8_on() {
+-#if defined(__HIPCC__)
+-    return false;
+-#else
+     static const bool on = [] {
+         const char* v = std::getenv("STRATA_TQ_STAGE");
+         if (v != nullptr && v[0] == '0') return false;
+         v = std::getenv("STRATA_TQ_SUB8");
++#if defined(__HIPCC__)
++        return v != nullptr && v[0] == '1';   // AMD: opt-in (STRATA_TQ_SUB8=1) until measured per architecture
++#else
+         return !(v != nullptr && v[0] == '0');
++#endif
+     }();
+     return on && g_stage_grid && !g_no_sub16_gu && !tq_stage_on();
+-#endif
+ }
+ // row chunks per block of the staged trellis gate/up and down kernels (STRATA_TQ_ROWCH, default 4)
+ int tq_row_chunks() {
