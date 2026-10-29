@@ -535,7 +535,8 @@ Multi-module Gradle / Java 21: contract-first SOAP (WSDL + XSD), gRPC inventory,
 Testcontainers. Clean dir per run; "done" = the agent finished itself and an independent `gradle clean build` passed.
 
 Files: [java-task/SPEC.md](java-task/SPEC.md) (put in the empty project dir), [java-task/PROMPT.txt](java-task/PROMPT.txt)
-(the task message, verbatim), [java-task/review-prompt.md](java-task/review-prompt.md) (reviewer prompt with the A–F rubric).
+(the task message, verbatim), [java-task/review-prompt.md](java-task/review-prompt.md) (reviewer prompt with the A–F rubric,
+used for the /60 scores below). Phase 2 and the 100-point scale (Oct 29): see [Two-phase task](#two-phase-task-and-the-100-point-scale-oct-29).
 Setup (current versions): Pi 1.2.0 on a Windows 11 laptop (Git Bash), OpenJDK 21.0.12, Gradle 9.0.0, Docker 29.5.3; model served over the
 LAN. Pi: `maxTokens` 32768, thinking medium or xhigh as in the table, MCP context7 + web search, loop guard
 pi-anti-doom-loop, empty agent memory, no `AGENTS.md`. Pi sends no sampling parameters: Strata (Gyro) runs with
@@ -595,6 +596,43 @@ uncertain edges"). DeepSeek Harness vs Pi over five same-condition pairs: −2, 
 directly: 70 tools per request vs Pi's 26, and runs PowerShell on Windows). One run per cell: not a ranking.
 Side model calls (session titles, recaps, subagents, background compaction) were switched off in DeepSeek Harness and oh-my-pi:
 on a single local server each of them evicts the agent's prompt cache.
+
+### Two-phase task and the 100-point scale (Oct 29)
+
+A good run already scored close to the top of the /60 axes, and the two reviewers differed by up to 7 points on the same
+project. Two changes:
+
+- **Phase 2** ([java-task/SPEC-2.md](java-task/SPEC-2.md), message [java-task/PROMPT-2.txt](java-task/PROMPT-2.txt)) continues
+  the same Pi session after phase 1 is built: one atomic stock reservation for all lines, `ReleaseStock` compensation, an
+  idempotent `placeOrder` by `requestId`, a transactional outbox to Kafka with a dead-letter topic, Flyway in both services,
+  no default `PII_KEY`, seven Testcontainers tests (Postgres + Kafka). On Gyro-M (196K) the session passes Pi's compaction
+  point (~163K), so the run also shows how the model works after a compaction.
+- **Review = fact checklist** ([java-task/RUBRIC.md](java-task/RUBRIC.md), prompt
+  [java-task/review-prompt-checklist.md](java-task/review-prompt-checklist.md)): every item is yes / partial / no with a
+  `path:line` as evidence, next to FACTS from [java-task/run-facts.py](java-task/run-facts.py) (the independent build, every
+  test case, the agent's own Pi session). Two reviewers (Claude, Codex); a split is settled by reading the cited line. On the
+  same project the /60 axes gave 48 vs 41, the checklist 26 vs 25.5 of 29 (one split, a wording issue, fixed).
+
+Total /100 over the whole task (a run that never reached phase 2 gets "no" on phase-2 items): **Spec 60** (64 checklist
+items, data-loss and key-leak items count twice) + **Beyond 25** (14 guarantees the spec does not ask for: a connection pool,
+readiness checks of dependencies, per-record Kafka commits, transient errors kept out of the DLT, the project's own
+concurrency and outage tests, distinct fault codes without internal error text…) + **Process 15** (finished on its own, a
+green build after its last edit, model time, nothing broken after a compaction, an honest final report).
+
+| Run (Gyro-M tuned, 196K int8, xhigh) | phases | wall time = tools + model | compactions | Spec /60 | Beyond /25 | Process /15 | Total /100 |
+|---|---|---|---|---|---|---|---|
+| Oct 27 | 1 | 32.3 min = 7.8 + 24.5 | 0 | 28.4 | 1.0 | 15 | **44.5** |
+| Oct 29 | 1 + 2 | 44.0 = 19.4 + 24.6, then 61.4 = 11.7 + 49.7 min | 1 at 161K | 58.0 | 3.0 | 10.5 | **71.5** |
+
+- Oct 29 phase 2: built and green on its own (21 of 21 tests, all phase-1 tests still passing after the compaction). The
+  tool time of its phase 1 is high because the laptop's Docker was busy with other work; model time is the same as on Oct 27.
+- Top defects in the two-phase project: the Kafka consumer commits the whole polled batch (a crash mid-batch skips the
+  rest for good); the loser of a concurrent same-`requestId` race releases the winner's reservation; one order-dependent test.
+- Two minutes after the compaction the model sent four edits for a refactor it had never made; they failed, and it
+  concluded that "the environment silently reverted part of my phase-1 refactor". The claim went into its final report and
+  into Pi's memory as a "lesson" (flag `FALSE_CLAIM`, Process −3). Neither reviewer caught it from the code; it shows only in
+  the session log.
+- The headroom is in Beyond: 1–3 of 25 here. A stronger model separates there, not in the Spec part.
 
 ## Quality checks
 
