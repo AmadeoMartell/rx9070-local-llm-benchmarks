@@ -119,8 +119,11 @@ def _ts(s):
         return None
 
 
+STALL_S = 300   # a single model response waited for longer than this = a client/network stall, not model work
+
+
 def parse_session(path):
-    phases, cur, calls = [], None, {}
+    phases, cur, calls, prev_t = [], None, {}, None
     for line in open(path, encoding="utf-8"):
         try:
             o = json.loads(line)
@@ -130,11 +133,16 @@ def parse_session(path):
         text = _text(m)
         if m.get("role") == "user" and (cur is None or text.lstrip().startswith("Phase 2")):
             cur = {"start": o.get("timestamp", ""), "end": "", "tools": 0, "gradle": 0, "gradle_failed": 0,
-                   "compactions": 0, "final": "", "tool_s": 0.0, "edited": False, "verified": False}
+                   "compactions": 0, "final": "", "tool_s": 0.0, "edited": False, "verified": False, "stalls": []}
             phases.append(cur)
         if cur is None:
             continue
         cur["end"] = o.get("timestamp", cur["end"])
+        # 29.10: a 28 s server answer reached Pi 20 min later (GPU idle meanwhile) and counted as model time
+        t_now = _ts(o.get("timestamp"))
+        if m.get("role") == "assistant" and prev_t and t_now and (t_now - prev_t).total_seconds() > STALL_S:
+            cur["stalls"].append(((t_now - prev_t).total_seconds(), o.get("timestamp", "")[11:16]))
+        prev_t = t_now or prev_t
         if "compact" in (str(o.get("type", "")) + str(o.get("customType", ""))).lower():
             cur["compactions"] += 1
         for c in m.get("content") if isinstance(m.get("content"), list) else []:
@@ -182,7 +190,10 @@ def report(root):
         t0, t1 = _ts(ph["start"]), _ts(ph["end"])
         if t0 and t1:   # tools run on this PC (shared with other work); compare models by the model part
             wall = (t1 - t0).total_seconds() / 60
-            print(f"  time: wall {wall:.1f} min = tools {ph['tool_s'] / 60:.1f} + model {wall - ph['tool_s'] / 60:.1f}")
+            stall = sum(s for s, _ in ph["stalls"]) / 60
+            print(f"  time: wall {wall:.1f} min = tools {ph['tool_s'] / 60:.1f} + model {wall - ph['tool_s'] / 60 - stall:.1f}"
+                  + (f" + stalls {stall:.1f} ({len(ph['stalls'])} response(s) waited > {STALL_S} s, at "
+                     + ", ".join(t for _, t in ph["stalls"]) + " UTC)" if ph["stalls"] else ""))
         # whole message: claims worth checking for P3 often sit at the end (29.10: "the environment reverted my files")
         print("  final message: " + ph["final"].replace("\n", " / "))
     print("\n## Hints (pointers, verify the line)")
@@ -228,6 +239,13 @@ def _selfcheck():
             msg("toolResult", "BUILD SUCCESSFUL", toolCallId="g2"), msg("assistant", edit("e2")),
             msg("toolResult", "ok", toolCallId="e2")]))
         assert [(p["edited"], p["verified"]) for p in parse_session(sess)] == [(True, True), (True, False)]
+        at = lambda ts, role, content: json.dumps({"type": "message", "timestamp": ts,
+                                                   "message": {"role": role, "content": content}})
+        open(sess, "w", encoding="utf-8").write("\n".join([
+            at("2026-10-29T09:00:00Z", "user", "Read SPEC.md"),
+            at("2026-10-29T09:01:00Z", "assistant", [{"type": "text", "text": "a"}]),      # 60 s: normal
+            at("2026-10-29T09:21:00Z", "assistant", [{"type": "text", "text": "b"}])]))   # 1200 s: stall
+        assert parse_session(sess)[0]["stalls"] == [(1200.0, "09:21")]
 
 
 if __name__ == "__main__":

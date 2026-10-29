@@ -173,7 +173,7 @@ Scored over the whole run (both phases where there are two). Each item 3 points:
 - P1 Each phase ends with a completion report from the agent (not cut off mid-work by the cap).
 - P2 After its last code change in each phase the agent ran a full gradle build with tests and it passed
   (FACTS: "verified after last edit").
-- P3 Model time (FACTS "model" minutes): phase 1 <= 30 -> Y, <= 60 -> P, more -> N; phase 2 <= 45 -> Y,
+- P3 Model time (FACTS "model" minutes; "stalls" — responses Pi waited > 5 min for — are not counted): phase 1 <= 30 -> Y, <= 60 -> P, more -> N; phase 2 <= 45 -> Y,
   <= 90 -> P, more -> N; two phases -> the lower verdict. Thresholds are provisional (same AI-PC only).
 - P4 After a context compaction nothing that worked broke: earlier tests still pass in FACTS and no finished
   feature was removed or rewritten into a weaker one. No compaction in the run -> P4 not scored. (False
